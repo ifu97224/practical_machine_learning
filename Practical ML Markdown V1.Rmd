@@ -1,0 +1,188 @@
+---
+output: pdf_document
+---
+Predicting How Well Barbell Lifts are Performed
+=======================================================================
+
+### Executive Summary
+
+Using accelerometer data from 6 participants in a study of how barbell lifts are performed the objective of this analysis was to build and test various models to predict the method by which the lifts were performed.
+
+4 models were developed using the 'caret' package in R in order to predict with which of the 5 possible methods the participants were using to complete the barbell lifts.  The models used and their accuracy (training sample 10 fold cross validation and validation data set) is shown in figure 1 below:
+
+```{r acc, echo = FALSE,results='asis'}
+library(xtable)
+
+model <- c("Random Forest","Gradient Boosting","LDA","Stacked")
+cv_accuracy <- c(0.9909,0.9952,0.9042,1)
+cv_accuracy <- sprintf("%1.2f%%", 100*cv_accuracy)
+valid_accuracy <- c(0.9917, 0.9944, 0.8964, 0.9941) 
+valid_accuracy <- sprintf("%1.2f%%", 100*valid_accuracy)
+valid_acc_table <- data.frame(model,cv_accuracy,valid_accuracy)
+names(valid_acc_table)[names(valid_acc_table)=="cv_accuracy"] <- "10 Fold CV Accuracy"
+names(valid_acc_table)[names(valid_acc_table)=="valid_accuracy"] <- "Validation Set Accuracy"
+names(valid_acc_table)[names(valid_acc_table)=="model"] <- "Model"
+
+
+# Create table
+print(xtable(valid_acc_table,align = "cccc"), type = "html")
+
+```
+
+
+**Figure 1 - Accuracy of all models**
+
+The analysis determined that it was possible to very accurately predict which of the 5 possible ways the participants were completing the barbell lifts.  Tree based models (Gradient Boosting and Random Forests) produced the best accuracy both in cross validation and on the validation data set.
+
+### Data Preparation
+
+In order to prepare the data for modeling the following steps were taken:
+
+*  Removed the 'summary' type variables (kurtosis, skewness, max, min etc.)
+*  Split the data into a training set (60% of observations) and a validation set (40% of observations)
+*  Treat outliers through Winsorization
+*  Create transformations of the predictor variables (log, squared, cubed, square root, cubed root, exponent)
+
+### Exploratory Data Analysis
+
+The next step of the analysis was to understand which of the variables were likely to be the top predictors for each of the 'ways' the participants could have completed the barbell lifts (the 'classe' variable in the data).  To do this the following statistical tests were run on each of the predictor variables in order to understand their importance in predicting the 'classe' variable:
+
+1.  Squared correlations
+2.  T-Tests
+3.  Univariate Logistic Regression
+4.  Chi-Square Tests
+
+For each of the tests a 'rank' was created for each variable to determine their importance in predicting the outcome.  The mean rank for all 4 tests was then calculated to estimate the overall importance of each variable.
+
+Finally, variable clustering was performed usig the ClustOfVar package to understand the correlations between each of the predictor variables.
+
+Having carried out these tests plots were created of the top (uncorrelated) predictors for each of the possible outcomes.  An example of the top 4 variables for predicting 'classe' A are shown in figure 2 below:
+
+```{r top_vars, echo = FALSE, fig.height = 8, fig.width = 12, results ='hide', message=FALSE}
+
+library(ggplot2)
+library(gridExtra)
+
+a <- ggplot(training,aes(factor(classe), pitch_forearm)) +
+  geom_boxplot(fill = "red") +
+  theme_bw() + 
+  ggtitle("Pitch Forearm by Classe") +
+  xlab("Classe") + 
+  ylab("Pitch Forearm")
+theme(axis.title.y=element_text(vjust=1,size=14),
+      axis.title.x=element_text(vjust=-0.5,size=14),
+      plot.title=element_text(vjust=1,size=16),
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12))
+
+b <- ggplot(training,aes(factor(classe), roll_forearm_squared)) +
+  geom_boxplot(fill = "red") +
+  theme_bw() + 
+  ggtitle("Roll Forearm ^2 by Classe") +
+  xlab("Classe") + 
+  ylab("Roll Forearm ^2")
+theme(axis.title.y=element_text(vjust=1,size=14),
+      axis.title.x=element_text(vjust=-0.5,size=14),
+      plot.title=element_text(vjust=1,size=16),
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12))
+
+c <- ggplot(training,aes(factor(classe), accel_arm_x_squared)) +
+  geom_boxplot(fill = "red") +
+  theme_bw() + 
+  ggtitle("Accel Arm X ^2 by Classe") +
+  xlab("Classe") + 
+  ylab("Accel Arm X ^2")
+theme(axis.title.y=element_text(vjust=1,size=14),
+      axis.title.x=element_text(vjust=-0.5,size=14),
+      plot.title=element_text(vjust=1,size=16),
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12))
+
+d <- ggplot(training,aes(factor(classe), magnet_dumbbell_x_squared)) +
+  geom_boxplot(fill = "red") +
+  theme_bw() + 
+  ggtitle("Magnet Dumbbell X ^2 by Classe") +
+  xlab("Classe") + 
+  ylab("Magnet Dumbbell X ^2")
+theme(axis.title.y=element_text(vjust=1,size=14),
+      axis.title.x=element_text(vjust=-0.5,size=14),
+      plot.title=element_text(vjust=1,size=16),
+      axis.text.x = element_text(size = 12),
+      axis.text.y = element_text(size = 12))
+
+grid.arrange(a, b, c, d, ncol=2, main = "Classe A Top (Non-Correlated) Predictors")
+
+```
+
+
+**Figure 2 - Top (uncorrelated) predictors for Classe A**
+  
+
+### Model Fitting and Selection
+  
+Initially 3 models were built on the training data (Random Forest, Gradient Boosting and LDA).  Cross validation was used to 'tune' the Random Forest and Gradient Boosting models.  Figure 3 below shows the final tuning parameters used for each of these models:
+
+```{r tuning, echo = FALSE,results='asis'}
+library(xtable)
+
+Model <- c("Random Forest","Random Forest","Gradient Boosting","Gradient Boosting","Gradient Boosting")
+Tuning <- c("mtry (number of variables","ntree (number of trees)","interaction.depth (tree depth)","n.trees (number of trees","shrinkage") 
+Value <- c(9,50,10,400,0.1)
+tuning_params <- data.frame(Model,Tuning,Value)
+names(tuning_params)[names(tuning_params)=="Tuning"] <- "Tuning Parameter"
+
+# Create table
+print(xtable(tuning_params,align = "cccc"), type = "html")
+
+```
+
+**Figure 3 - Tuning parameters selected through Cross Validation**
+
+Finally a stacked model was created by combining the Random Forest, Gradient Boosting and LDA predictions and creating a further Random Forest model.  The plot in figure 4 below shows the accuracy of all models developed on the validation data set:
+
+```{r valid_acc, echo = FALSE, fig.height = 8, fig.width = 12, results ='hide', message=FALSE}
+
+library(ggplot2)
+library(gridExtra)
+
+model <- c("RF","GBM","LDA","Stacked")
+valid_accuracy = c(0.9917, 0.9944, 0.8964, 0.9941) 
+valid_acc_plot <- data.frame(model,valid_accuracy)
+
+a <- ggplot(valid_acc_plot, aes(factor(model),valid_accuracy)) +
+     geom_bar(stat = "identity", fill = "red") +
+     theme_bw() + 
+     ggtitle("Validation Set Accuracy by Model Type") +
+     xlab("Model") + 
+     ylab("Validation Set Accuracy") +
+     theme(axis.title.y=element_text(vjust=1,size=14),
+           axis.title.x=element_text(vjust=-0.5,size=14),
+           plot.title=element_text(vjust=1,size=16),
+           axis.text.x = element_text(size = 12),
+           axis.text.y = element_text(size = 12)) +
+           scale_y_continuous(labels=percent) +
+     geom_text(label=sprintf("%1.2f%%", 100*valid_accuracy),vjust = 1.5)
+a
+
+```
+**Figure 4 - Validation set accuracy of all models**
+
+NOTE:  10 fold cross validation was also used to estimate the out of sample error rate in addition to the validation data set.  For the cross validation the Random Forest model had an accuracy of 99.09%, the Gradient Boosting model had an accuracy of 99.52%, the LDA model had an accuracy of 90.42% and the stacked model had an accuracy of 100%.
+
+### Conclusions
+
+The modeling has shown that it is possible to predict the method by which the participants were completing the barbell lifts to  a very high degree of accuracy.  The best model (Gradient Boosting) was able to predict the method (classe) with 99.44% accuracy on the validation dataset.  
+  
+**Appendix 1 - Random Forest Variable Importance for Stacked Model**
+
+The plot below shows the Random Forest variable importance for the stacked model on each of the 'classe' types:
+
+```{r fig.width=12, fig.height=8,echo=FALSE}
+library(png)
+library(grid)
+img <- readPNG("/users/Richard/Documents/Coursera Data Science Track/Practical Machine Learning/Assignment/rf_importance_stacked.png")
+ grid.raster(img)
+```
+
+It is clear from the plot that the Random Forest and Gradient Boosting models are the most important variables used in the stacked model, this makes sense given the performance of the LDA model on the validation dataset.
